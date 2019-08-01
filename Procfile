@@ -1,0 +1,1 @@
+web: bin/travel-plan
