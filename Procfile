@@ -1,1 +1,1 @@
-web: travel-plan
+web: bin/travel-plan
