@@ -32,3 +32,9 @@
 [prune]
   go-tests = true
   unused-packages = true
+
+[metadata.heroku]
+  root-package = "github.com/MaiaraB/travel-plan"
+  go-version = "go1.12"
+  install = ["./..."]
+  ensure = "true"
