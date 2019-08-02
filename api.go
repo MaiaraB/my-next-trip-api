@@ -82,9 +82,9 @@ func getFlights(w http.ResponseWriter, r *http.Request) {
 		// json.NewEncoder(w).Encode(flightResults)
 		flightResultJSON, err := json.Marshal(<-results)
 		if err != nil {
-			fmt.Printf("The response marshalling failed with error %s\n", err)
+			log.Printf("The response marshalling failed with error %s\n", err)
 		}
-
+		log.Println("Thread #", i)
 		w.Write(flightResultJSON)
 		w.Write([]byte("<"))
 		flusher.Flush()
