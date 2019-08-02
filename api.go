@@ -52,7 +52,7 @@ func getFlights(w http.ResponseWriter, r *http.Request) {
 	data.Set("originPlace", origin)
 	data.Set("destinationPlace", destination)
 
-	var counter = 0
+	// var counter = 0
 
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -68,42 +68,19 @@ func getFlights(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(fmt.Sprintf("%d<", len(intervals))))
 	flusher.Flush()
 
+	results := make(chan []FlightsResult, len(intervals))
+
 	for i := 0; i < len(intervals); i++ {
-		data.Set("outboundDate", intervals[i].Outbound.Format(layoutISO))
-		data.Set("inboundDate", intervals[i].Inbound.Format(layoutISO))
+		dataCopy := copyValues(data)
+		dataCopy.Set("outboundDate", intervals[i].Outbound.Format(layoutISO))
+		dataCopy.Set("inboundDate", intervals[i].Inbound.Format(layoutISO))
 
-		flightResponse := getItineraries(data)
-		var flightResults []FlightsResult
+		go getPartialResults(results, dataCopy)
+	}
 
-		for _, it := range flightResponse.Itineraries {
-			result := FlightsResult{}
-
-			// Setting result Currency
-			result.Currency = searchCurrencyByCode(flightResponse.Currencies, flightResponse.Query.Currency)
-
-			// Setting result AgentInfo
-			var agentsInfo []AgentInfo
-			for _, po := range it.PricingOptions {
-				agent := searchAgentByID(flightResponse.Agents, po.AgentIds[0])
-				agentsInfo = append(agentsInfo, AgentInfo{agent.Name, agent.ImageURL, po.Price, po.DeeplinkURL})
-			}
-			result.AgentsInfo = agentsInfo
-
-			// Setting result InboundLeg
-			result.InboundLeg = configResponseLeg(flightResponse, it.InboundLegID)
-
-			// Setting result OutboundLeg
-			result.OutboundLeg = configResponseLeg(flightResponse, it.OutboundLegID)
-
-			flightResults = append(flightResults, result)
-
-			// log.Println("RESULT: ", result)
-			counter++
-			log.Println("Itinerary #", counter)
-		}
-
+	for i := 0; i < len(intervals); i++ {
 		// json.NewEncoder(w).Encode(flightResults)
-		flightResultJSON, err := json.Marshal(flightResults)
+		flightResultJSON, err := json.Marshal(<-results)
 		if err != nil {
 			fmt.Printf("The response marshalling failed with error %s\n", err)
 		}
@@ -114,6 +91,49 @@ func getFlights(w http.ResponseWriter, r *http.Request) {
 	}
 	//log.Println("#results: ", counter)
 
+}
+
+func copyValues(data url.Values) url.Values {
+	newData := url.Values{}
+	for k, v := range data {
+		newData[k] = v
+	}
+	return newData
+}
+
+func getPartialResults(respond chan<- []FlightsResult, data url.Values) {
+	flightResponse := getItineraries(data)
+	var flightResults []FlightsResult
+
+	for _, it := range flightResponse.Itineraries {
+		result := FlightsResult{}
+
+		// Setting result Currency
+		result.Currency = searchCurrencyByCode(flightResponse.Currencies, flightResponse.Query.Currency)
+
+		// Setting result AgentInfo
+		var agentsInfo []AgentInfo
+		for _, po := range it.PricingOptions {
+			agent := searchAgentByID(flightResponse.Agents, po.AgentIds[0])
+			agentsInfo = append(agentsInfo, AgentInfo{agent.Name, agent.ImageURL, po.Price, po.DeeplinkURL})
+		}
+		result.AgentsInfo = agentsInfo
+
+		// Setting result InboundLeg
+		result.InboundLeg = configResponseLeg(flightResponse, it.InboundLegID)
+
+		// Setting result OutboundLeg
+		result.OutboundLeg = configResponseLeg(flightResponse, it.OutboundLegID)
+
+		flightResults = append(flightResults, result)
+
+		// log.Println("RESULT: ", result)
+		// counter++
+		// log.Println("Itinerary #", counter)
+		log.Println("Itinerary price: ", result.AgentsInfo[0].Price)
+	}
+
+	respond <- flightResults
 }
 
 func configResponseLeg(flightResponse FlightsResponse, legID string) LegResponse {
