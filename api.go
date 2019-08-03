@@ -33,11 +33,14 @@ func getFlights(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	queryValues := r.URL.Query()
-	// roundTrip, _ := strconv.ParseBool(queryValues.Get("roundTrip"))
 	origin := queryValues.Get("origin")
 	destination := queryValues.Get("destination")
 	outboundWeekDay, _ := strconv.Atoi(queryValues.Get("outboundWeekDay"))
 	duration, _ := strconv.Atoi(queryValues.Get("duration"))
+	if queryValues.Get("duration") == "" {
+		log.Println("ONE WAY TRIP")
+		duration = -1
+	}
 	country := queryValues.Get("country")
 	currency := queryValues.Get("currency")
 	locale := queryValues.Get("locale")
@@ -73,7 +76,9 @@ func getFlights(w http.ResponseWriter, r *http.Request) {
 	for i := 0; i < len(intervals); i++ {
 		dataCopy := copyValues(data)
 		dataCopy.Set("outboundDate", intervals[i].Outbound.Format(layoutISO))
-		dataCopy.Set("inboundDate", intervals[i].Inbound.Format(layoutISO))
+		if duration > -1 {
+			dataCopy.Set("inboundDate", intervals[i].Inbound.Format(layoutISO))
+		}
 
 		go getPartialResults(results, dataCopy)
 	}
@@ -119,17 +124,16 @@ func getPartialResults(respond chan<- []FlightsResult, data url.Values) {
 		}
 		result.AgentsInfo = agentsInfo
 
-		// Setting result InboundLeg
-		result.InboundLeg = configResponseLeg(flightResponse, it.InboundLegID)
-
 		// Setting result OutboundLeg
 		result.OutboundLeg = configResponseLeg(flightResponse, it.OutboundLegID)
 
+		// Setting result InboundLeg
+		if data.Get("inboundDate") != "" {
+			result.InboundLeg = configResponseLeg(flightResponse, it.InboundLegID)
+		}
+
 		flightResults = append(flightResults, result)
 
-		// log.Println("RESULT: ", result)
-		// counter++
-		// log.Println("Itinerary #", counter)
 		log.Println("Itinerary price: ", result.AgentsInfo[0].Price)
 	}
 

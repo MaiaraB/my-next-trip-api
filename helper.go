@@ -20,6 +20,7 @@ func getDateIntervals(weekday time.Weekday, duration int, beginDate time.Time, e
 	}
 
 	inbound := outbound.AddDate(0, 0, duration)
+
 	for {
 		if inbound.Before(endDate) {
 			intervals = append(intervals, Interval{Outbound: outbound, Inbound: inbound})
