@@ -33,10 +33,14 @@ func getFlights(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	queryValues := r.URL.Query()
+	cabinClass := queryValues.Get("cabinClass")
 	origin := queryValues.Get("origin")
 	destination := queryValues.Get("destination")
 	outboundWeekDay, _ := strconv.Atoi(queryValues.Get("outboundWeekDay"))
 	duration, _ := strconv.Atoi(queryValues.Get("duration"))
+	adults, _ := strconv.Atoi(queryValues.Get("adults"))
+	children, _ := strconv.Atoi(queryValues.Get("children"))
+	infants, _ := strconv.Atoi(queryValues.Get("infants"))
 	if queryValues.Get("duration") == "" {
 		log.Println("ONE WAY TRIP")
 		duration = -1
@@ -44,16 +48,35 @@ func getFlights(w http.ResponseWriter, r *http.Request) {
 	country := queryValues.Get("country")
 	currency := queryValues.Get("currency")
 	locale := queryValues.Get("locale")
+	fromDate := queryValues.Get("fromDate")
+	toDate := queryValues.Get("toDate")
 
-	intervals := getDateIntervals(time.Weekday(outboundWeekDay), duration, time.Now(), time.Now().AddDate(0, 3, 0))
+	parsedFromDate, err := time.Parse(layoutISO, fromDate)
+	if err != nil {
+		log.Printf("Error while parsing date: %s", err)
+	}
+	parsedToDate, err := time.Parse(layoutISO, toDate)
+	if err != nil {
+		log.Printf("Error while parsing date: %s", err)
+	}
+
+	intervals := getDateIntervals(time.Weekday(outboundWeekDay), duration, parsedFromDate, parsedToDate)
 	data := url.Values{}
-	data.Set("cabinClass", "economy")
-	data.Set("adults", "1")
+	data.Set("cabinClass", cabinClass)
+	data.Set("adults", strconv.Itoa(adults))
 	data.Set("locale", locale)
 	data.Set("currency", currency)
 	data.Set("country", country)
 	data.Set("originPlace", origin)
 	data.Set("destinationPlace", destination)
+	if children > 0 {
+		data.Set("children", strconv.Itoa(children))
+	}
+	if infants > 0 {
+		data.Set("infants", strconv.Itoa(infants))
+	}
+
+	log.Printf("CABIN CLASS: %s, ADULTS: %s, CHILDREN: %s, INFANTS: %s", cabinClass, strconv.Itoa(adults), strconv.Itoa(children), strconv.Itoa(infants))
 
 	// var counter = 0
 
