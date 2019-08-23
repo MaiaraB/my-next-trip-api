@@ -11,6 +11,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -18,6 +19,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/matryer/runner"
 
 	"github.com/MaiaraB/travel-plan/ssmodels"
 
@@ -29,13 +32,141 @@ const (
 )
 
 func getFlights(w http.ResponseWriter, r *http.Request) {
-	notify := w.(http.CloseNotifier).CloseNotify()
-	go func() {
-		<-notify
-		log.Println("The client closed the connection prematurely. Cleaning up.")
-		// panic(http.ErrAbortHandler)
+	ctx := r.Context()
+	ctxWithTimeout, cancelFunction := context.WithTimeout(ctx, time.Duration(10)*time.Second)
+
+	defer func() {
+		log.Println("getFlights defer: canceling context")
+		cancelFunction()
 	}()
 
+	data, intervals := createDataValueForSkyscannerAPI(r)
+
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	// w.Header().Set("Access-Control-Allow-Methods", "OPTIONS, HEAD, GET")
+	// w.Header().Set("Connection", "Keep-Alive")
+	// w.Header().Set("Transfer-Encoding", "chunked")
+	w.WriteHeader(http.StatusOK)
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		log.Printf("Expected http.ResponseWriter to be an http.Flusher")
+	}
+
+	// Sending the number of response chunks for tracking loading purposes
+	w.Write([]byte(fmt.Sprintf("%d<", len(intervals))))
+	flusher.Flush()
+
+	isRoundTrip := (r.URL.Query().Get("duration") != "")
+	results := make(chan []models.FlightsResult, len(intervals))
+
+	for i := 0; i < len(intervals); i++ {
+		dataCopy := copyValues(data)
+		dataCopy.Set("outboundDate", intervals[i].Outbound.Format(layoutISO))
+		if isRoundTrip {
+			dataCopy.Set("inboundDate", intervals[i].Inbound.Format(layoutISO))
+		}
+
+		go getPartialResults(ctxWithTimeout, results, dataCopy, i)
+	}
+
+	for i := 0; i < len(intervals); i++ {
+		// json.NewEncoder(w).Encode(flightResults)
+		select {
+		case <-ctxWithTimeout.Done():
+			close(results)
+			return
+		case flightResults := <-results:
+			flightResultJSON, err := json.Marshal(flightResults)
+			if err != nil {
+				log.Printf("The response marshalling failed with error %s\n", err)
+			}
+			// log.Println("Thread #", i)
+			w.Write(flightResultJSON)
+			w.Write([]byte("<"))
+			flusher.Flush()
+			log.Println("Finished thread #", i)
+		}
+	}
+}
+
+func getPartialResults(ctx context.Context, respond chan<- []models.FlightsResult, data url.Values, index int) {
+	defer func() {
+		log.Printf("Partial results #%d complete", index)
+	}()
+
+	flightsResponse := make(chan ssmodels.FlightsResponse)
+
+	task := runner.Go(func(shouldStop runner.S) error {
+		getFlightsSkyscanner(shouldStop, flightsResponse, data)
+		return nil
+	})
+
+	select {
+	case <-ctx.Done():
+		log.Printf("getPartialResults #%d: time to return", index)
+		task.Stop()
+		select {
+		case <-task.StopChan():
+			// task successfully stopped
+		case <-time.After(1 * time.Second):
+			// task didn't stop in time
+		}
+
+		// execution continues once the code has stopped or has
+		// timed out.
+		log.Printf("stoped task getPartialResults #%d successfully", index)
+
+		if task.Err() != nil {
+			log.Fatalln("getPartialResults failed:", task.Err())
+		}
+	case flights := <-flightsResponse:
+		var flightResults []models.FlightsResult
+		for _, it := range flights.Itineraries {
+			result := models.FlightsResult{}
+
+			// Setting result Currency
+			result.Currency = ssmodels.SearchCurrencyByCode(flights.Currencies, flights.Query.Currency)
+
+			// Setting result AgentInfo
+			var agentsInfo []models.Agent
+			for _, po := range it.PricingOptions {
+				agent := ssmodels.SearchAgentByID(flights.Agents, po.AgentIds[0])
+				agentsInfo = append(agentsInfo, models.Agent{
+					Name:        agent.Name,
+					ImageURL:    agent.ImageURL,
+					Price:       po.Price,
+					DeepLinkURL: po.DeeplinkURL})
+			}
+			result.AgentsInfo = agentsInfo
+
+			// Setting result OutboundLeg
+			result.OutboundLeg = configResponseLeg(flights, it.OutboundLegID)
+
+			// Setting result InboundLeg
+			if data.Get("inboundDate") != "" {
+				result.InboundLeg = configResponseLeg(flights, it.InboundLegID)
+			}
+
+			flightResults = append(flightResults, result)
+
+			log.Println("Itinerary price: ", result.AgentsInfo[0].Price)
+		}
+
+		respond <- flightResults
+	}
+}
+
+func copyValues(data url.Values) url.Values {
+	newData := url.Values{}
+	for k, v := range data {
+		newData[k] = v
+	}
+	return newData
+}
+
+func createDataValueForSkyscannerAPI(r *http.Request) (url.Values, []Interval) {
 	queryValues := r.URL.Query()
 	cabinClass := queryValues.Get("cabinClass")
 	origin := queryValues.Get("origin")
@@ -65,6 +196,7 @@ func getFlights(w http.ResponseWriter, r *http.Request) {
 	}
 
 	intervals := getDateIntervals(time.Weekday(outboundWeekDay), duration, parsedFromDate, parsedToDate)
+
 	data := url.Values{}
 	data.Set("cabinClass", cabinClass)
 	data.Set("adults", strconv.Itoa(adults))
@@ -82,87 +214,7 @@ func getFlights(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("CABIN CLASS: %s, ADULTS: %s, CHILDREN: %s, INFANTS: %s", cabinClass, strconv.Itoa(adults), strconv.Itoa(children), strconv.Itoa(infants))
 
-	// var counter = 0
-
-	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	// w.Header().Set("Access-Control-Allow-Methods", "OPTIONS, HEAD, GET")
-	// w.Header().Set("Connection", "Keep-Alive")
-	// w.Header().Set("Transfer-Encoding", "chunked")
-	w.WriteHeader(http.StatusOK)
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		log.Printf("Expected http.ResponseWriter to be an http.Flusher")
-	}
-	w.Write([]byte(fmt.Sprintf("%d<", len(intervals))))
-	flusher.Flush()
-
-	results := make(chan []models.FlightsResult, len(intervals))
-
-	for i := 0; i < len(intervals); i++ {
-		dataCopy := copyValues(data)
-		dataCopy.Set("outboundDate", intervals[i].Outbound.Format(layoutISO))
-		if duration > -1 {
-			dataCopy.Set("inboundDate", intervals[i].Inbound.Format(layoutISO))
-		}
-
-		go getPartialResults(results, dataCopy)
-	}
-
-	for i := 0; i < len(intervals); i++ {
-		// json.NewEncoder(w).Encode(flightResults)
-		flightResultJSON, err := json.Marshal(<-results)
-		if err != nil {
-			log.Printf("The response marshalling failed with error %s\n", err)
-		}
-		log.Println("Thread #", i)
-		w.Write(flightResultJSON)
-		w.Write([]byte("<"))
-		flusher.Flush()
-	}
-
-}
-
-func copyValues(data url.Values) url.Values {
-	newData := url.Values{}
-	for k, v := range data {
-		newData[k] = v
-	}
-	return newData
-}
-
-func getPartialResults(respond chan<- []models.FlightsResult, data url.Values) {
-	flightResponse := getItineraries(data)
-	var flightResults []models.FlightsResult
-
-	for _, it := range flightResponse.Itineraries {
-		result := models.FlightsResult{}
-
-		// Setting result Currency
-		result.Currency = ssmodels.SearchCurrencyByCode(flightResponse.Currencies, flightResponse.Query.Currency)
-
-		// Setting result AgentInfo
-		var agentsInfo []models.Agent
-		for _, po := range it.PricingOptions {
-			agent := ssmodels.SearchAgentByID(flightResponse.Agents, po.AgentIds[0])
-			agentsInfo = append(agentsInfo, models.Agent{agent.Name, agent.ImageURL, po.Price, po.DeeplinkURL})
-		}
-		result.AgentsInfo = agentsInfo
-
-		// Setting result OutboundLeg
-		result.OutboundLeg = configResponseLeg(flightResponse, it.OutboundLegID)
-
-		// Setting result InboundLeg
-		if data.Get("inboundDate") != "" {
-			result.InboundLeg = configResponseLeg(flightResponse, it.InboundLegID)
-		}
-
-		flightResults = append(flightResults, result)
-
-		log.Println("Itinerary price: ", result.AgentsInfo[0].Price)
-	}
-
-	respond <- flightResults
+	return data, intervals
 }
 
 func configResponseLeg(flightResponse ssmodels.FlightsResponse, legID string) models.Leg {
@@ -172,7 +224,7 @@ func configResponseLeg(flightResponse ssmodels.FlightsResponse, legID string) mo
 	stops := []models.Place{}
 	for _, stopID := range leg.StopsIds {
 		stop := ssmodels.SearchPlaceByID(flightResponse.Places, stopID)
-		stops = append(stops, models.Place{stop.Name, stop.Code})
+		stops = append(stops, models.Place{Name: stop.Name, Code: stop.Code})
 	}
 
 	origin := ssmodels.SearchPlaceByID(flightResponse.Places, leg.OriginStation)
@@ -181,7 +233,7 @@ func configResponseLeg(flightResponse ssmodels.FlightsResponse, legID string) mo
 	carriers := []models.Carrier{}
 	for _, carrierID := range leg.CarrierIds {
 		carrier := ssmodels.SearchCarrierByID(flightResponse.Carriers, carrierID)
-		carriers = append(carriers, models.Carrier{carrier.Name, carrier.ImageURL})
+		carriers = append(carriers, models.Carrier{Name: carrier.Name, ImageURL: carrier.ImageURL})
 	}
 
 	segs := []models.Segment{}
@@ -190,16 +242,20 @@ func configResponseLeg(flightResponse ssmodels.FlightsResponse, legID string) mo
 		origin := ssmodels.SearchPlaceByID(flightResponse.Places, seg.OriginStation)
 		destination := ssmodels.SearchPlaceByID(flightResponse.Places, seg.DestinationStation)
 		segResponse := models.Segment{
-			models.Place{origin.Name, origin.Code},
-			models.Place{destination.Name, destination.Code},
-			seg.DepartureDateTime,
-			seg.ArrivalDateTime,
-			seg.Duration}
+			Origin:      models.Place{Name: origin.Name, Code: origin.Code},
+			Destination: models.Place{Name: destination.Name, Code: destination.Code},
+			Departure:   seg.DepartureDateTime,
+			Arrival:     seg.ArrivalDateTime,
+			Duration:    seg.Duration}
 		segs = append(segs, segResponse)
 	}
 
-	return models.Leg{leg.Departure, leg.Arrival, leg.Duration, stops,
-		models.Place{origin.Name, origin.Code},
-		models.Place{destination.Name, destination.Code},
-		carriers, segs}
+	return models.Leg{
+		Departure:   leg.Departure,
+		Arrival:     leg.Arrival,
+		Duration:    leg.Duration,
+		Stops:       stops,
+		Origin:      models.Place{Name: origin.Name, Code: origin.Code},
+		Destination: models.Place{Name: destination.Name, Code: destination.Code},
+		Carriers:    carriers, Segments: segs}
 }
