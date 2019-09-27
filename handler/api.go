@@ -22,6 +22,8 @@ import (
 
 	"github.com/matryer/runner"
 
+	"github.com/pkg/errors"
+
 	"github.com/MaiaraB/travel-plan/ssmodels"
 
 	"github.com/MaiaraB/travel-plan/models"
@@ -33,20 +35,23 @@ const (
 
 func getFlights(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	ctxWithTimeout, cancelFunction := context.WithTimeout(ctx, time.Duration(10)*time.Second)
+	ctxWithTimeout, cancelFunction := context.WithTimeout(ctx, time.Duration(20)*time.Second)
 
 	defer func() {
 		log.Println("getFlights defer: canceling context")
 		cancelFunction()
 	}()
 
-	data, intervals := createDataValueForSkyscannerAPI(r)
+	data, intervals, err := createDataValueForSkyscannerAPI(r)
 
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	// w.Header().Set("Access-Control-Allow-Methods", "OPTIONS, HEAD, GET")
-	// w.Header().Set("Connection", "Keep-Alive")
-	// w.Header().Set("Transfer-Encoding", "chunked")
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 
 	flusher, ok := w.(http.Flusher)
@@ -93,7 +98,7 @@ func getFlights(w http.ResponseWriter, r *http.Request) {
 
 func getPartialResults(ctx context.Context, respond chan<- []models.FlightsResult, data url.Values, index int) {
 	defer func() {
-		log.Printf("Partial results #%d complete", index)
+		// log.Printf("Partial results #%d complete", index)
 	}()
 
 	flightsResponse := make(chan ssmodels.FlightsResponse)
@@ -116,10 +121,8 @@ func getPartialResults(ctx context.Context, respond chan<- []models.FlightsResul
 
 		// execution continues once the code has stopped or has
 		// timed out.
-		log.Printf("stoped task getPartialResults #%d successfully", index)
-
 		if task.Err() != nil {
-			log.Fatalln("getPartialResults failed:", task.Err())
+			log.Fatalf("getPartialResults %d failed: %s", index, task.Err())
 		}
 	case flights := <-flightsResponse:
 		var flightResults []models.FlightsResult
@@ -166,7 +169,7 @@ func copyValues(data url.Values) url.Values {
 	return newData
 }
 
-func createDataValueForSkyscannerAPI(r *http.Request) (url.Values, []Interval) {
+func createDataValueForSkyscannerAPI(r *http.Request) (url.Values, []Interval, error) {
 	queryValues := r.URL.Query()
 	cabinClass := queryValues.Get("cabinClass")
 	origin := queryValues.Get("origin")
@@ -195,8 +198,14 @@ func createDataValueForSkyscannerAPI(r *http.Request) (url.Values, []Interval) {
 		log.Printf("Error while parsing date: %s", err)
 	}
 
-	intervals := getDateIntervals(time.Weekday(outboundWeekDay), duration, parsedFromDate, parsedToDate)
+	// Checking if the search interval exceeds 3 months
+	if parsedToDate.After(parsedFromDate.AddDate(0, 3, 0)) {
+		return nil, nil, errors.New("SearchIntervalTooBig")
+	}
 
+	log.Println("PARSED FROM DATE: ", parsedFromDate, ", PARSED TO DATE: ", parsedToDate)
+	intervals := getDateIntervals(time.Weekday(outboundWeekDay), duration-1, parsedFromDate, parsedToDate)
+	log.Println("INTERVALS: ", intervals)
 	data := url.Values{}
 	data.Set("cabinClass", cabinClass)
 	data.Set("adults", strconv.Itoa(adults))
@@ -214,7 +223,7 @@ func createDataValueForSkyscannerAPI(r *http.Request) (url.Values, []Interval) {
 
 	log.Printf("CABIN CLASS: %s, ADULTS: %s, CHILDREN: %s, INFANTS: %s", cabinClass, strconv.Itoa(adults), strconv.Itoa(children), strconv.Itoa(infants))
 
-	return data, intervals
+	return data, intervals, nil
 }
 
 func configResponseLeg(flightResponse ssmodels.FlightsResponse, legID string) models.Leg {
