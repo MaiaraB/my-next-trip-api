@@ -64,4 +64,22 @@ var routes = Routes{
 		"/api/flights",
 		getFlights,
 	},
+	Route{
+		"GetCountries",
+		strings.ToUpper("Get"),
+		"/api/countries",
+		getCountries,
+	},
+	Route{
+		"GetCurrencies",
+		strings.ToUpper("Get"),
+		"/api/currencies",
+		getCurrencies,
+	},
+	Route{
+		"GetPlaces",
+		strings.ToUpper("Get"),
+		"/api/queryPlace",
+		getPlaces,
+	},
 }

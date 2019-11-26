@@ -36,14 +36,13 @@ func getFlights(w http.ResponseWriter, r *http.Request) {
 
 	data, intervals, err := createDataAndIntervalsForSkyscannerAPI(r)
 
-	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	// w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.WriteHeader(http.StatusOK)
 
 	flusher, ok := w.(http.Flusher)
@@ -85,4 +84,57 @@ func getFlights(w http.ResponseWriter, r *http.Request) {
 			log.Println("Finished thread #", i)
 		}
 	}
+}
+
+func getCountries(w http.ResponseWriter, r *http.Request) {
+	queryValues := r.URL.Query()
+	locale := queryValues.Get("locale")
+
+	countries := getCountriesSkyscanner(locale)
+
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.WriteHeader(http.StatusOK)
+
+	countriesJSON, err := json.Marshal(countries)
+	if err != nil {
+		log.Printf("The response marshalling failed with error %s\n", err)
+	}
+
+	w.Write(countriesJSON)
+}
+
+func getCurrencies(w http.ResponseWriter, r *http.Request) {
+	currencies := getCurrenciesSkyscanner()
+
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.WriteHeader(http.StatusOK)
+
+	currenciesJSON, err := json.Marshal(currencies)
+	if err != nil {
+		log.Printf("The response marshalling failed with error %s\n", err)
+	}
+	w.Write(currenciesJSON)
+}
+
+func getPlaces(w http.ResponseWriter, r *http.Request) {
+	queryValues := r.URL.Query()
+	country := queryValues.Get("country")
+	currency := queryValues.Get("currency")
+	locale := queryValues.Get("locale")
+	query := queryValues.Get("query")
+
+	places := getPlacesSkyscanner(country, currency, locale, query)
+
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.WriteHeader(http.StatusOK)
+
+	placesJSON, err := json.Marshal(places)
+	if err != nil {
+		log.Printf("The response marshalling failed with error %s\n", err)
+	}
+
+	w.Write(placesJSON)
 }
