@@ -110,7 +110,7 @@ func getPartialResults(ctx context.Context, respond chan<- []models.FlightsResul
 	flightsResponse := make(chan ssmodels.FlightsResponse)
 
 	task := runner.Go(func(shouldStop runner.S) error {
-		getFlightsSkyscanner(shouldStop, flightsResponse, data)
+		getFlightsSkyscanner(shouldStop, flightsResponse, data, index)
 		return nil
 	})
 
@@ -132,6 +132,7 @@ func getPartialResults(ctx context.Context, respond chan<- []models.FlightsResul
 		}
 	case flights := <-flightsResponse:
 		var flightResults []models.FlightsResult
+		log.Printf("Thread %d: %+v. Size: %d", index, flights.Query, len(flights.Itineraries))
 		for _, it := range flights.Itineraries {
 			result := models.FlightsResult{}
 
