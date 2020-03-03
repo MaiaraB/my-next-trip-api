@@ -10,7 +10,7 @@ Endpoint that returns all the flights from `origin` to `destionation` departurin
 
 ### URL
 
-http://localhost:<env PORT>/api/flights
+http://localhost:[env PORT or 8080]/api/flights
   
 ### Method
 
@@ -52,7 +52,7 @@ Chunk content:
 
 ### URL
 
-http://localhost:<env PORT>/api/countries
+http://localhost:[env PORT]/api/countries
   
 ### Method
 
@@ -72,7 +72,7 @@ Content: `[{Code: , Name: },...]`
 
 ### URL
 
-http://localhost:<env PORT>/api/currencies
+http://localhost:[env PORT]/api/currencies
   
 ### Method
 
@@ -87,7 +87,7 @@ Content: `[{Currency: {Code:, Symbol:, ThousandsSeparator:, DecimalSeparator:, S
 
 ### URL
 
-http://localhost:<env PORT>/api/queryPlace
+http://localhost:[env PORT]/api/queryPlace
   
 ### Method
 
